@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Gesture Flappy Bird 🐤</title>
+  <style>
+    body { text-align:center; font-family:sans-serif; background:#70c5ce; }
+    canvas { background:#fff; display:block; margin:auto; }
+    input, button { padding:10px; margin:5px; }
+  </style>
+</head>
+<body>
+
+<h2>Gesture Flappy Bird 🐤</h2>
+
+<p>Paste your Teachable Machine model link:</p>
+<input id="modelURL" placeholder="Paste model URL here" size="50"><br>
+
+<p>Enter gesture name for JUMP (example: hand_up):</p>
+<input id="gestureName" placeholder="Gesture name"><br>
+
+<button onclick="startGame()">Start Game 🚀</button>
+
+<h3>Score: <span id="score">0</span></h3>
+
+<canvas id="gameCanvas" width="400" height="500"></canvas>
+
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest"></script>
+<script src="https://cdn.jsdelivr.net/npm/@teachablemachine/image@latest"></script>
+
+<script>
+let model, webcam;
+let jumpGesture = "";
+let running = false;
+
+// GAME
+let canvas = document.getElementById("gameCanvas");
+let ctx = canvas.getContext("2d");
+
+let bird, pipes, score;
+
+// START GAME
+async function startGame() {
+    let URL = document.getElementById("modelURL").value;
+    jumpGesture = document.getElementById("gestureName").value;
+
+    if (!URL.endsWith("/")) URL += "/";
+
+    const modelURL = URL + "model.json";
+    const metadataURL = URL + "metadata.json";
+
+    model = await tmImage.load(modelURL, metadataURL);
+
+    webcam = new tmImage.Webcam(200, 200, true);
+    await webcam.setup();
+    await webcam.play();
+
+    running = true;
+
+    resetGame();
+    mlLoop();
+    gameLoop();
+}
+
+// ML LOOP
+async function mlLoop() {
+    if (!running) return;
+
+    webcam.update();
+    const prediction = await model.predict(webcam.canvas);
+
+    let highest = prediction.reduce((a, b) =>
+        a.probability > b.probability ? a : b
+    );
+
+    if (highest.className === jumpGesture && highest.probability > 0.85) {
+        bird.velocity = -8;
+    }
+
+    requestAnimationFrame(mlLoop);
+}
+
+// GAME LOOP
+function gameLoop() {
+    if (!running) return;
+
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    bird.velocity += 0.5;
+    bird.y += bird.velocity;
+
+    ctx.fillStyle = "yellow";
+    ctx.fillRect(bird.x, bird.y, 20, 20);
+
+    if (Math.random() < 0.02) {
+        let h = Math.random() * 200 + 50;
+        pipes.push({ x: 400, height: h });
+    }
+
+    pipes.forEach(pipe => {
+        pipe.x -= 2;
+
+        ctx.fillStyle = "green";
+        ctx.fillRect(pipe.x, 0, 40, pipe.height);
+        ctx.fillRect(pipe.x, pipe.height + 120, 40, 500);
+
+        if (
+            bird.x < pipe.x + 40 &&
+            bird.x + 20 > pipe.x &&
+            (bird.y < pipe.height || bird.y > pipe.height + 120)
+        ) {
+            resetGame();
+        }
+
+        if (pipe.x === bird.x) {
+            score++;
+            document.getElementById("score").innerText = score;
+        }
+    });
+
+    requestAnimationFrame(gameLoop);
+}
+
+// RESET
+function resetGame() {
+    bird = { x: 50, y: 200, velocity: 0 };
+    pipes = [];
+    score = 0;
+    document.getElementById("score").innerText = score;
+}
+</script>
+
+</body>
+</html>
