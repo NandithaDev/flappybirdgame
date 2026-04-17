@@ -1,133 +1,573 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <title>Gesture Flappy Bird 🐤</title>
-  <style>
-    body { text-align:center; font-family:sans-serif; background:#70c5ce; }
-    canvas { background:#fff; display:block; margin:auto; }
-    input, button { padding:10px; margin:5px; }
-  </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>🦕 GestureDino</title>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest"></script>
+<script src="https://cdn.jsdelivr.net/npm/@teachablemachine/image@latest/dist/teachablemachine-image.min.js"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: #0d0d1a; color: #fff;
+    font-family: 'Press Start 2P', monospace;
+    display: flex; flex-direction: column; align-items: center;
+    min-height: 100vh; padding: 16px;
+  }
+  h2 { font-size: 1.1rem; color: #00ffcc; margin-bottom: 10px;
+       text-shadow: 0 0 12px #00ffcc88; letter-spacing: 2px; text-align:center; }
+
+  #modelUrl {
+    width: 80%; display: block; margin: 0 auto 8px;
+    padding: 8px 12px; background: #0d0d1a;
+    border: 1px solid #00ffcc55; border-radius: 6px;
+    color: #fff; font-family: monospace; font-size: 0.8rem;
+  }
+  .btn-row { display:flex; gap:8px; justify-content:center; flex-wrap:wrap; margin-bottom:8px; }
+  button {
+    padding: 8px 16px; background: #00ffcc22;
+    border: 1px solid #00ffcc; border-radius: 6px;
+    color: #00ffcc; font-family: 'Press Start 2P', monospace;
+    font-size: 0.6rem; cursor: pointer; transition: background 0.2s; white-space: nowrap;
+  }
+  button:hover { background: #00ffcc44; }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  #class-row {
+    display: none; gap: 12px; justify-content: center; align-items: center;
+    flex-wrap: wrap; font-size: 0.55rem; color: #aaa; margin-bottom: 8px;
+  }
+  select {
+    padding: 6px 8px; background: #0d0d1a; border: 1px solid #00ffcc55;
+    border-radius: 6px; color: #fff; font-size: 0.6rem; font-family: monospace;
+  }
+
+  #status { font-size: 0.6rem; color: #ffdd57; text-align: center; min-height:18px; margin-bottom:6px; }
+
+  /* gesture bars */
+  #gesture-bar {
+    display: flex; gap: 20px; justify-content: center;
+    font-size: 0.5rem; color: #aaa; margin-bottom: 8px; flex-wrap: wrap;
+  }
+  .gbar { display:flex; flex-direction:column; align-items:center; gap:4px; }
+  .gbar-label { color:#ccc; font-size:0.5rem; }
+  .gbar-fill-wrap { width:100px; height:10px; background:#1a1a2e; border-radius:5px; overflow:hidden; border:1px solid #00ffcc22; }
+  .gbar-fill { height:100%; border-radius:5px; width:0%; transition: width 0.08s linear; }
+  .gbar-fill.jump-bar { background: linear-gradient(90deg, #00ffcc, #00ff88); }
+  .gbar-fill.duck-bar { background: linear-gradient(90deg, #ff6644, #ffaa44); }
+  .gbar-fill.other-bar { background: #445; }
+  .gbar-pct { font-size:0.45rem; color:#888; }
+
+  /* jump flash indicator */
+  #jump-flash {
+    font-size: 0.7rem; text-align:center; min-height:20px; margin-bottom:4px;
+    color: #00ffcc; opacity:0; transition: opacity 0.1s;
+  }
+
+  #gameCanvas {
+    border: 2px solid #00ffcc33; border-radius: 8px;
+    display: block; background: #111122; max-width: 100%;
+  }
+  #webcam-wrap {
+    position: fixed; bottom: 12px; right: 12px;
+    border: 2px solid #00ffcc55; border-radius: 8px;
+    overflow: hidden; opacity: 0.9; display: none;
+    box-shadow: 0 0 16px #00ffcc44;
+  }
+  #webcam-label {
+    background:#0d0d1a; text-align:center; font-size:0.4rem;
+    color:#00ffcc; padding:3px; letter-spacing:1px;
+  }
+  #hint { font-size: 0.45rem; color: #333; margin-top: 8px; text-align: center; }
+</style>
 </head>
 <body>
 
-<h2>Gesture Flappy Bird 🐤</h2>
+<h2>🦕 Gesture Dino</h2>
 
-<p>Paste your Teachable Machine model link:</p>
-<input id="modelURL" placeholder="Paste model URL here" size="50"><br>
+<input id="modelUrl" placeholder="Paste Teachable Machine model URL here" />
+<div class="btn-row">
+  <button onclick="loadModel()">📦 Load Model</button>
+  <button id="btnStart" onclick="startGame()" disabled>▶ Start</button>
+  <button onclick="resetGame()">↺ Restart</button>
+  <button onclick="toggleKeyboard()">⌨ Keyboard Mode</button>
+</div>
+<div id="class-row">
+  <label>Jump class:</label><select id="jumpSel"></select>
+  <label>Duck class:</label><select id="duckSel"></select>
+  <label>Threshold:</label>
+  <select id="confSel">
+    <option value="0.45">45%</option>
+    <option value="0.55" selected>55%</option>
+    <option value="0.65">65%</option>
+    <option value="0.75">75%</option>
+  </select>
+</div>
 
-<p>Enter gesture name for JUMP (example: hand_up):</p>
-<input id="gestureName" placeholder="Gesture name"><br>
+<div id="status">Idle — paste a Teachable Machine URL and click Load Model, or use ⌨ Keyboard Mode</div>
+<div id="jump-flash">⬆ JUMP!</div>
+<div id="gesture-bar"></div>
 
-<button onclick="startGame()">Start Game 🚀</button>
+<canvas id="gameCanvas" width="860" height="240"></canvas>
+<div id="hint">Keyboard: SPACE / ↑ = Jump &nbsp;|&nbsp; ↓ = Duck &nbsp;|&nbsp; Gesture: show Jump pose briefly, show Duck pose to crouch</div>
 
-<h3>Score: <span id="score">0</span></h3>
-
-<canvas id="gameCanvas" width="400" height="500"></canvas>
-
-<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest"></script>
-<script src="https://cdn.jsdelivr.net/npm/@teachablemachine/image@latest"></script>
+<div id="webcam-wrap">
+  <div id="webcam-label">📷 LIVE</div>
+  <canvas id="webcam-canvas" width="120" height="120"></canvas>
+</div>
 
 <script>
-let model, webcam;
-let jumpGesture = "";
+// ═══════════════════════════════════════════════════════════════════════
+//  DESIGN PHILOSOPHY FOR GESTURE LATENCY
+//
+//  Problem: model.predict() takes ~20-60ms per call. If we trigger jump
+//  only when we see ONE frame above threshold, we may miss fast gestures
+//  or fire too late after the user has already moved their hand back.
+//
+//  Solution:
+//  1. Run predict in a tight setTimeout(0) loop (no rAF gating).
+//  2. Maintain a ROLLING BUFFER of last N confidence values per class.
+//  3. Fire jump when the ROLLING AVERAGE crosses threshold — this smooths
+//     noise without adding perceptible delay (buffer = 2 frames ≈ 40ms).
+//  4. After firing, enforce a COOLDOWN (800ms) before jump can fire again.
+//     This replaces the "wait for pose release" latch which caused the
+//     user to have to fully drop their hand before the next jump registered.
+//  5. Game speed is slow (2px/frame start) and obstacles spawn far apart.
+// ═══════════════════════════════════════════════════════════════════════
+
+const CANVAS_W = 860, CANVAS_H = 240;
+const GROUND_Y  = 186;
+
+// ── rolling confidence buffer ──────────────────────────────────────────
+const CONF_BUF_SIZE = 2;   // average over last 2 predictions (~40ms)
+let confBuffer = {};        // {className: [val, val, ...]}
+
+function bufferPush(className, val) {
+  if (!confBuffer[className]) confBuffer[className] = [];
+  confBuffer[className].push(val);
+  if (confBuffer[className].length > CONF_BUF_SIZE)
+    confBuffer[className].shift();
+}
+function bufferAvg(className) {
+  const b = confBuffer[className];
+  if (!b || b.length === 0) return 0;
+  return b.reduce((a,v) => a+v, 0) / b.length;
+}
+
+// ── jump cooldown ───────────────────────────────────────────────────────
+const JUMP_COOLDOWN_MS = 850;  // ms before gesture jump can fire again
+let lastGestureJumpAt  = -9999;
+
+// ── game state ──────────────────────────────────────────────────────────
+let model = null, webcam = null;
+let keyboardMode = false;
 let running = false;
+let animId  = null;
 
-// GAME
-let canvas = document.getElementById("gameCanvas");
-let ctx = canvas.getContext("2d");
+let score = 0, hiScore = 0;
+let speed = 2;              // very slow start
+let framesSinceSpawn = 0;
+let spawnInterval = 130;    // plenty of time between obstacles
 
-let bird, pipes, score;
+let dino = {};
+function resetDino() {
+  dino = { x:80, y:GROUND_Y, vy:0, onGround:true, ducking:false, w:20, h:20 };
+}
+resetDino();
 
-// START GAME
-async function startGame() {
-    let URL = document.getElementById("modelURL").value;
-    jumpGesture = document.getElementById("gestureName").value;
+let obstacles = [];
+let gestureConf = {};   // raw latest confidence per class
+let classNames  = [];
 
-    if (!URL.endsWith("/")) URL += "/";
+// keyboard
+let keyJump = false, keyDuck = false, kbJumpLatch = false;
 
-    const modelURL = URL + "model.json";
-    const metadataURL = URL + "metadata.json";
+// ── canvas ───────────────────────────────────────────────────────────────
+const canvas = document.getElementById("gameCanvas");
+const ctx    = canvas.getContext("2d");
 
-    model = await tmImage.load(modelURL, metadataURL);
+// ── keyboard events ───────────────────────────────────────────────────────
+document.addEventListener("keydown", e => {
+  if (e.code==="Space"||e.code==="ArrowUp")  { keyJump=true;  e.preventDefault(); }
+  if (e.code==="ArrowDown")                   { keyDuck=true;  e.preventDefault(); }
+});
+document.addEventListener("keyup", e => {
+  if (e.code==="Space"||e.code==="ArrowUp")  keyJump=false;
+  if (e.code==="ArrowDown")                  keyDuck=false;
+});
 
-    webcam = new tmImage.Webcam(200, 200, true);
-    await webcam.setup();
-    await webcam.play();
-
-    running = true;
-
-    resetGame();
-    mlLoop();
-    gameLoop();
+function toggleKeyboard() {
+  keyboardMode = !keyboardMode;
+  document.getElementById("btnStart").disabled = false;
+  setStatus(keyboardMode ? "⌨ Keyboard mode — SPACE/↑ jump, ↓ duck. Press Start!" : "Keyboard mode off.");
 }
 
-// ML LOOP
-async function mlLoop() {
-    if (!running) return;
+// ── helpers ───────────────────────────────────────────────────────────────
+function setStatus(t) { document.getElementById("status").innerText = t; }
+function sanitize(s)  { return s.replace(/[^a-zA-Z0-9]/g, "_"); }
 
-    webcam.update();
-    const prediction = await model.predict(webcam.canvas);
-
-    let highest = prediction.reduce((a, b) =>
-        a.probability > b.probability ? a : b
-    );
-
-    if (highest.className === jumpGesture && highest.probability > 0.85) {
-        bird.velocity = -8;
-    }
-
-    requestAnimationFrame(mlLoop);
+let flashTimer = null;
+function flashJump() {
+  const el = document.getElementById("jump-flash");
+  el.style.opacity = "1";
+  clearTimeout(flashTimer);
+  flashTimer = setTimeout(() => { el.style.opacity = "0"; }, 400);
 }
 
-// GAME LOOP
-function gameLoop() {
-    if (!running) return;
+// ── model loading ─────────────────────────────────────────────────────────
+async function loadModel() {
+  const raw = document.getElementById("modelUrl").value.trim();
+  if (!raw) { setStatus("⚠ Paste a Teachable Machine URL first."); return; }
+  const base = raw.endsWith("/") ? raw : raw + "/";
+  setStatus("⏳ Loading model…");
+  try {
+    model = await tmImage.load(base+"model.json", base+"metadata.json");
+    classNames = model.getClassLabels ? model.getClassLabels() : [];
 
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    const jSel = document.getElementById("jumpSel");
+    const dSel = document.getElementById("duckSel");
+    jSel.innerHTML = dSel.innerHTML = "";
+    classNames.forEach(n => {
+      jSel.appendChild(new Option(n,n));
+      dSel.appendChild(new Option(n,n));
+    });
+    if (classNames.length >= 2) dSel.selectedIndex = 1;
+    document.getElementById("class-row").style.display = "flex";
 
-    bird.velocity += 0.5;
-    bird.y += bird.velocity;
-
-    ctx.fillStyle = "yellow";
-    ctx.fillRect(bird.x, bird.y, 20, 20);
-
-    if (Math.random() < 0.02) {
-        let h = Math.random() * 200 + 50;
-        pipes.push({ x: 400, height: h });
-    }
-
-    pipes.forEach(pipe => {
-        pipe.x -= 2;
-
-        ctx.fillStyle = "green";
-        ctx.fillRect(pipe.x, 0, 40, pipe.height);
-        ctx.fillRect(pipe.x, pipe.height + 120, 40, 500);
-
-        if (
-            bird.x < pipe.x + 40 &&
-            bird.x + 20 > pipe.x &&
-            (bird.y < pipe.height || bird.y > pipe.height + 120)
-        ) {
-            resetGame();
-        }
-
-        if (pipe.x === bird.x) {
-            score++;
-            document.getElementById("score").innerText = score;
-        }
+    // gesture bars — color the jump bar cyan, duck bar orange, rest grey
+    const bar = document.getElementById("gesture-bar");
+    bar.innerHTML = "";
+    classNames.forEach((n, i) => {
+      const colorClass = i === 0 ? "jump-bar" : i === 1 ? "duck-bar" : "other-bar";
+      bar.innerHTML += `
+        <div class="gbar">
+          <div class="gbar-label">${n}</div>
+          <div class="gbar-fill-wrap">
+            <div class="gbar-fill ${colorClass}" id="gfill_${sanitize(n)}"></div>
+          </div>
+          <div class="gbar-pct" id="gpct_${sanitize(n)}">0%</div>
+        </div>`;
     });
 
-    requestAnimationFrame(gameLoop);
+    webcam = new tmImage.Webcam(120,120,true);
+    await webcam.setup();
+    await webcam.play();
+    document.getElementById("webcam-wrap").style.display = "block";
+
+    setStatus("✅ Model ready! Set Jump/Duck classes then press ▶ Start.");
+    document.getElementById("btnStart").disabled = false;
+
+    predictLoop();
+  } catch(err) {
+    setStatus("❌ Load failed: " + err.message);
+    console.error(err);
+  }
 }
 
-// RESET
+// ═══════════════════════════════════════════════════════════════════════
+//  PREDICT LOOP — tight setTimeout, decoupled from rAF
+//  Jump fires HERE the instant rolling average crosses threshold.
+// ═══════════════════════════════════════════════════════════════════════
+let predictBusy = false;
+async function predictLoop() {
+  if (!webcam || !model || predictBusy) { setTimeout(predictLoop, 8); return; }
+  predictBusy = true;
+
+  try {
+    webcam.update();
+    const wc = document.getElementById("webcam-canvas");
+    wc.getContext("2d").drawImage(webcam.canvas, 0, 0, 120, 120);
+
+    const conf      = parseFloat(document.getElementById("confSel").value);
+    const jumpClass = document.getElementById("jumpSel").value;
+    const duckClass = document.getElementById("duckSel").value;
+
+    const preds = await model.predict(webcam.canvas);
+
+    let bestP = 0, bestN = "";
+    preds.forEach(p => {
+      // store raw
+      gestureConf[p.className] = p.probability;
+      // push to rolling buffer
+      bufferPush(p.className, p.probability);
+
+      if (p.probability > bestP) { bestP = p.probability; bestN = p.className; }
+
+      // update UI bars
+      const k = sanitize(p.className);
+      const f = document.getElementById("gfill_" + k);
+      const t = document.getElementById("gpct_"  + k);
+      if (f) f.style.width = Math.round(p.probability * 100) + "%";
+      if (t) t.innerText   = Math.round(p.probability * 100) + "%";
+    });
+
+    if (bestP > 0.4) setStatus(`🎥 ${bestN} — ${Math.round(bestP*100)}%`);
+
+    // ── JUMP: fire on rolling average crossing threshold ─────────────
+    //  Cooldown prevents double-firing; no need to wait for pose release.
+    const jumpAvg = bufferAvg(jumpClass);
+    const now     = performance.now();
+    if (jumpAvg >= conf && (now - lastGestureJumpAt) > JUMP_COOLDOWN_MS) {
+      lastGestureJumpAt = now;
+      if (running && dino.onGround) {
+        dino.vy = -10;
+        dino.onGround = false;
+        flashJump();
+      }
+    }
+
+    // duck is continuous — just use latest confidence, no buffer needed
+    // (handled in readInput each frame)
+
+  } catch(e) { /* silently skip bad frames */ }
+
+  predictBusy = false;
+  setTimeout(predictLoop, 0);
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  INPUT  (per frame — keyboard jump + duck for both keyboard & gesture)
+// ═══════════════════════════════════════════════════════════════════════
+function readInput() {
+  const conf      = parseFloat(document.getElementById("confSel").value);
+  const duckClass = document.getElementById("duckSel").value;
+
+  // keyboard jump — edge trigger
+  if (keyJump && !kbJumpLatch && dino.onGround) {
+    dino.vy = -10; dino.onGround = false; kbJumpLatch = true; flashJump();
+  }
+  if (!keyJump) kbJumpLatch = false;
+
+  // duck — gesture OR keyboard, continuous
+  const wantsDuck = keyDuck || (gestureConf[duckClass] || 0) >= conf;
+  dino.ducking = wantsDuck && dino.onGround;
+  if (dino.ducking)       { dino.h = 10; dino.y = GROUND_Y + 10; }
+  else if (dino.onGround) { dino.h = 20; dino.y = GROUND_Y; }
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  OBSTACLES
+// ═══════════════════════════════════════════════════════════════════════
+function spawnObstacle() {
+  // Only spawn one obstacle type at a time, clearly spaced
+  const r = Math.random();
+  if (r < 0.6) {
+    // Cactus — ground level, must jump
+    const h = 22 + Math.floor(Math.random() * 18);
+    obstacles.push({ x: CANVAS_W + 20, y: GROUND_Y + 20 - h, w: 16, h, type:"cactus" });
+  } else {
+    // Bird — air, must duck. Two distinct heights:
+    //   HIGH bird: flies at head height → must duck
+    //   LOW bird: flies at chest height → must duck
+    const birdY = Math.random() < 0.5 ? GROUND_Y - 30 : GROUND_Y - 6;
+    obstacles.push({ x: CANVAS_W + 20, y: birdY, w: 28, h: 16, type:"bird" });
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  DRAWING
+// ═══════════════════════════════════════════════════════════════════════
+// Pre-build static star positions once
+const STARS = Array.from({length:40}, (_, i) => ({
+  x: (i*137+11) % CANVAS_W,
+  y: (i*97+23)  % (GROUND_Y - 20),
+  r: i % 3 === 0 ? 2 : 1.5
+}));
+
+function drawScene() {
+  ctx.clearRect(0, 0, CANVAS_W, CANVAS_H);
+
+  // Sky
+  const sky = ctx.createLinearGradient(0, 0, 0, CANVAS_H);
+  sky.addColorStop(0, "#08082a");
+  sky.addColorStop(1, "#0f0f28");
+  ctx.fillStyle = sky;
+  ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+
+  // Stars
+  ctx.fillStyle = "#ffffff44";
+  STARS.forEach(s => ctx.fillRect(s.x, s.y, s.r, s.r));
+
+  // Ground line + glow
+  ctx.fillStyle = "#00ffcc";
+  ctx.fillRect(0, GROUND_Y + 20, CANVAS_W, 2);
+  ctx.fillStyle = "#00ffcc18";
+  ctx.fillRect(0, GROUND_Y + 22, CANVAS_W, 8);
+
+  // Dino
+  const { x:dx, y:dy, w:dw, h:dh } = dino;
+  // Glow behind dino
+  ctx.shadowColor = "#00ffcc";
+  ctx.shadowBlur  = 8;
+  ctx.fillStyle = "#00ffcc";
+  ctx.fillRect(dx, dy, dw, dh);
+  ctx.shadowBlur = 0;
+  // Eye
+  ctx.fillStyle = "#0d0d1a";
+  ctx.fillRect(dx + dw - 5, dy + 3, 3, 3);
+  // Legs
+  if (dino.onGround && !dino.ducking) {
+    const leg = Math.floor(score / 10) % 2;
+    ctx.fillStyle = "#00ccaa";
+    ctx.fillRect(dx + 4,  dy + dh, 4, leg ? 6 : 3);
+    ctx.fillRect(dx + 12, dy + dh, 4, leg ? 3 : 6);
+  }
+
+  // Obstacles
+  obstacles.forEach(o => {
+    if (o.type === "cactus") {
+      ctx.shadowColor = "#44ff88";
+      ctx.shadowBlur  = 6;
+      ctx.fillStyle   = "#44ff88";
+      ctx.fillRect(o.x + 5, o.y, 6, o.h);                          // trunk
+      ctx.fillRect(o.x,     o.y + Math.floor(o.h*0.35), 16, 4);    // mid arm
+      ctx.fillRect(o.x,     o.y + Math.floor(o.h*0.20), 5, 10);    // left arm
+      ctx.fillRect(o.x+11,  o.y + Math.floor(o.h*0.20), 5, 10);    // right arm
+      ctx.shadowBlur = 0;
+    } else {
+      ctx.shadowColor = "#ff6644";
+      ctx.shadowBlur  = 6;
+      ctx.fillStyle   = "#ff6644";
+      ctx.fillRect(o.x,        o.y + 5, o.w, 6);      // body
+      ctx.fillRect(o.x+o.w-7,  o.y,     7, 6);         // head
+      ctx.fillStyle = "#ff9966";
+      const flap = Math.floor(score/8) % 2;
+      ctx.fillRect(o.x + 4, flap ? o.y - 3 : o.y + 9, 16, 5);  // wing
+      ctx.shadowBlur = 0;
+    }
+  });
+
+  // Approach warning: tint left edge red when obstacle is close
+  const closest = obstacles.reduce((best, o) => {
+    const gap = o.x - (dino.x + dino.w);
+    return gap > 0 && gap < (best === null ? Infinity : best.gap)
+      ? { gap, o } : best;
+  }, null);
+  if (closest && closest.gap < 120) {
+    const alpha = (1 - closest.gap / 120) * 0.12;
+    ctx.fillStyle = `rgba(255,80,80,${alpha})`;
+    ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+  }
+
+  // Score
+  ctx.fillStyle = "#00ffcc";
+  ctx.font = "10px 'Press Start 2P'";
+  ctx.fillText("SCORE " + String(score).padStart(5,"0"), 20, 20);
+  ctx.fillText("HI    " + String(hiScore).padStart(5,"0"), CANVAS_W-180, 20);
+
+  // Speed indicator
+  ctx.fillStyle = "#ffffff22";
+  ctx.font = "7px 'Press Start 2P'";
+  ctx.fillText(`SPD ${speed.toFixed(1)}`, CANVAS_W/2 - 24, 20);
+}
+
+function drawGameOver() {
+  ctx.fillStyle = "rgba(0,0,0,0.65)";
+  ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+  ctx.textAlign = "center";
+  ctx.shadowColor = "#ff4466"; ctx.shadowBlur = 20;
+  ctx.fillStyle = "#ff4466";
+  ctx.font = "18px 'Press Start 2P'";
+  ctx.fillText("GAME OVER", CANVAS_W/2, CANVAS_H/2 - 18);
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = "#ffdd57";
+  ctx.font = "9px 'Press Start 2P'";
+  ctx.fillText(`Score: ${score}   Hi: ${hiScore}`, CANVAS_W/2, CANVAS_H/2 + 6);
+  ctx.fillText("Press ↺ Restart", CANVAS_W/2, CANVAS_H/2 + 26);
+  ctx.textAlign = "left";
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  COLLISION  (generous margin so it feels fair)
+// ═══════════════════════════════════════════════════════════════════════
+function checkCollision() {
+  const m = 5;
+  for (const o of obstacles) {
+    if (dino.x+m < o.x+o.w-2 && dino.x+dino.w-m > o.x+2 &&
+        dino.y+m < o.y+o.h-2 && dino.y+dino.h-m > o.y+2) return true;
+  }
+  return false;
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  GAME LOOP
+// ═══════════════════════════════════════════════════════════════════════
+function gameLoop() {
+  if (!running) return;
+
+  // Physics — soft gravity, full arc visible
+  if (!dino.onGround) {
+    dino.vy += 0.38;
+    dino.y  += dino.vy;
+    if (dino.y >= GROUND_Y) {
+      dino.y = GROUND_Y; dino.vy = 0; dino.onGround = true;
+    }
+  }
+
+  readInput();
+
+  obstacles.forEach(o => o.x -= speed);
+  obstacles = obstacles.filter(o => o.x + o.w > -30);
+
+  if (++framesSinceSpawn >= spawnInterval) {
+    spawnObstacle();
+    framesSinceSpawn = 0;
+    // slow ramp — interval reduces by 1 every 10 obstacles (min 70)
+    spawnInterval = Math.max(70, spawnInterval - 1);
+  }
+
+  score++;
+  // Speed ramps gently: +0.3 every 600 frames, capped at 5
+  speed = Math.min(5, 2 + Math.floor(score / 600) * 0.3);
+  if (score > hiScore) hiScore = score;
+
+  if (checkCollision()) {
+    running = false;
+    drawScene();
+    drawGameOver();
+    setStatus(`💀 Game Over! Score: ${score}`);
+    return;
+  }
+
+  drawScene();
+  animId = requestAnimationFrame(gameLoop);
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  CONTROLS
+// ═══════════════════════════════════════════════════════════════════════
+function startGame() {
+  if (!model && !keyboardMode) {
+    setStatus("⚠ Load a model first, or enable ⌨ Keyboard Mode.");
+    return;
+  }
+  resetDino();
+  obstacles = []; score = 0; speed = 2;
+  spawnInterval = 130; framesSinceSpawn = 60; // first obstacle at 70 frames in
+  kbJumpLatch = false;
+  lastGestureJumpAt = -9999;
+  confBuffer = {};
+  running = true;
+  if (animId) cancelAnimationFrame(animId);
+  setStatus("▶ Go! Show your Jump or Duck gesture.");
+  animId = requestAnimationFrame(gameLoop);
+}
+
 function resetGame() {
-    bird = { x: 50, y: 200, velocity: 0 };
-    pipes = [];
-    score = 0;
-    document.getElementById("score").innerText = score;
+  running = false;
+  if (animId) cancelAnimationFrame(animId);
+  resetDino();
+  obstacles = []; score = 0; speed = 2;
+  spawnInterval = 130; framesSinceSpawn = 0;
+  kbJumpLatch = false;
+  lastGestureJumpAt = -9999;
+  confBuffer = {};
+  drawScene();
+  setStatus("Ready — Press ▶ Start.");
 }
-</script>
 
+drawScene();
+</script>
 </body>
 </html>
